@@ -1,14 +1,17 @@
 import pandas as pd
 import re
 import csv
-from afinn import Afinn
 import numpy as np
 import skfuzzy as fuzz
+from nltk.sentiment import SentimentIntensityAnalyzer
+import nltk
+
+# Download the required NLTK data
+nltk.download('vader_lexicon')
 
 # Load the data
 file_path = 'test_data.csv'
 data = pd.read_csv(file_path)
-afinn = Afinn()
 
 # Define a dictionary for common English abbreviations with variations
 abbreviations = {
@@ -73,16 +76,17 @@ def clean_text(text):
 # Apply the cleaning function to the 'sentence' column
 data['sentence'] = data['sentence'].apply(clean_text)
 
-# Calculate sentiment scores for each sentence based on the AFINN lexicon
-# Positive score: sum of positive word scores
-data['positive_score'] = data['sentence'].apply(lambda x: sum([afinn.score(word) for word in x.split() if afinn.score(word) > 0]))
+# Initialize the NLTK Sentiment Intensity Analyzer
+sia = SentimentIntensityAnalyzer()
 
-# Negative score: sum of negative word scores
-data['negative_score'] = data['sentence'].apply(lambda x: sum([afinn.score(word) for word in x.split() if afinn.score(word) < 0]))
+# Calculate sentiment scores for each sentence using NLTK's VADER
+data['sentiment'] = data['sentence'].apply(lambda x: sia.polarity_scores(x))
+
+# Extract positive, negative, and neutral scores
+data['positive_score'] = data['sentiment'].apply(lambda x: x['pos'])
+data['negative_score'] = data['sentiment'].apply(lambda x: x['neg'])
 
 # Fuzzification of the scores
-
-# Define the fuzzy membership functions for positive and negative scores
 positive_max = data['positive_score'].max()
 negative_max = abs(data['negative_score'].min())
 
@@ -100,11 +104,11 @@ negative_high = fuzz.trimf(x_negative, [negative_max/2, negative_max, negative_m
 # Function to fuzzify a value based on membership functions
 def fuzzify(value, membership_functions, value_range):
     memberships = [fuzz.interp_membership(value_range, mf, value) for mf in membership_functions]
-    return [float(m) for m in memberships] 
+    return [float(m) for m in memberships]
 
 # Fuzzify the positive and negative sentiment scores
 data['positive_fuzzy'] = data['positive_score'].apply(lambda x: fuzzify(x, [positive_low, positive_medium, positive_high], x_positive))
-data['negative_fuzzy'] = data['negative_score'].apply(lambda x: fuzzify(abs(x), [negative_low, negative_medium, negative_high], x_negative))
+data['negative_fuzzy'] = data['negative_score'].apply(lambda x: fuzzify(x, [negative_low, negative_medium, negative_high], x_negative))
 
 # Save the dataset with fuzzified sentiment scores to a new CSV file
 output_file_path = 'tweets_with_fuzzy_scores.csv'
