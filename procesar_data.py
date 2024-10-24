@@ -183,7 +183,7 @@ data["negative_score"] = data["sentiment"].apply(lambda x: x["neg"])
 
 # Fuzzification of the scores
 positive_max = data["positive_score"].max()
-negative_max = abs(data["negative_score"].min())
+negative_max = abs(data["negative_score"].max())
 
 x_positive = np.linspace(0, positive_max, 100)
 x_negative = np.linspace(0, negative_max, 100)
@@ -214,10 +214,16 @@ data["negative_fuzzy"] = data["negative_score"].apply(
     lambda x: fuzzify(x, [negative_low, negative_medium, negative_high], x_negative)
 )
 
-# Save the dataset with fuzzified sentiment scores to a new CSV file
-output_file_path = "tweets_with_fuzzy_scores.csv"
-data[
-    ["sentence", "positive_score", "negative_score", "positive_fuzzy", "negative_fuzzy"]
-].to_csv(output_file_path, index=False, quoting=csv.QUOTE_ALL)
+print(f"Negative score range: min={data['negative_score'].min()}, max={data['negative_score'].max()}")
+print(f"Positive score range: min={data['positive_score'].min()}, max={data['positive_score'].max()}")
 
-print(f"Processed file saved at {output_file_path}")
+print(f"x_positive range: {x_positive}")
+print(f"x_negative range: {x_negative}")
+
+# Save the dataset with fuzzified sentiment scores to a new CSV file
+#output_file_path = "tweets_with_fuzzy_scores.csv"
+#data[
+#    ["sentence", "positive_score", "negative_score", "positive_fuzzy", "negative_fuzzy"]
+#].to_csv(output_file_path, index=False, quoting=csv.QUOTE_ALL)
+
+#print(f"Processed file saved at {output_file_path}")
