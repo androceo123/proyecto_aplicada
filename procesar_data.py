@@ -5,11 +5,12 @@ import numpy as np
 import skfuzzy as fuzz
 from nltk.sentiment import SentimentIntensityAnalyzer
 import nltk
+import time
 
-# Download the required NLTK data
+# Descargar los datos necesarios de NLTK
 nltk.download("vader_lexicon")
 
-# Load the data
+# Cargar los datos
 file_path = "test_data.csv"
 data = pd.read_csv(file_path)
 
@@ -141,89 +142,165 @@ abbreviations = {
 }
 
 
-# Function to clean the text
+# Función para limpiar el texto
 def clean_text(text):
-    # Expand abbreviations (with and without apostrophes and spaces)
-    for abbr, full_form in abbreviations.items():
-        text = re.sub(r"\b" + abbr + r"\b", full_form, text, flags=re.IGNORECASE)
-
-    # Handle the special case for "its" as a possessive pronoun (ignore if followed by a noun or adjective)
-    text = re.sub(r"\bits\b(?!\s+(own|[a-zA-Z]+))", "it is", text)
-
-    # Remove URLs
+    # Eliminar URLs
     text = re.sub(r"http\S+|www\S+", "", text)
 
-    # Remove @ mentions
+    # Eliminar menciones (@)
     text = re.sub(r"@\w+", "", text)
 
-    # Remove punctuation and numbers
+    # Eliminar puntuación y números
     text = re.sub(r"[^\w\s]|[\d]", " ", text)
 
-    # Replace multiple spaces with a single space
+    # Reemplazar múltiples espacios por un solo espacio
     text = re.sub(r"\s+", " ", text).strip()
 
-    # Convert to lowercase and remove non-ASCII characters
+    # Convertir a minúsculas y eliminar caracteres no ASCII
     text = text.lower().encode("ascii", "ignore").decode()
 
     return text
 
-
-# Apply the cleaning function to the 'sentence' column
-data["sentence"] = data["sentence"].apply(clean_text)
-
-# Initialize the NLTK Sentiment Intensity Analyzer
-sia = SentimentIntensityAnalyzer()
-
-# Calculate sentiment scores for each sentence using NLTK's VADER
-data["sentiment"] = data["sentence"].apply(lambda x: sia.polarity_scores(x))
-
-# Extract positive, negative, and neutral scores, VADER returns a dictionary with positive, negative, neutral, and compound scores.
-data["positive_score"] = data["sentiment"].apply(lambda x: x["pos"])
-data["negative_score"] = data["sentiment"].apply(lambda x: x["neg"])
-
-# Fuzzification of the scores
-positive_max = data["positive_score"].max()
-negative_max = abs(data["negative_score"].max())
-
-x_positive = np.linspace(0, positive_max, 100)
-x_negative = np.linspace(0, negative_max, 100)
-
-positive_low = fuzz.trimf(x_positive, [0, 0, positive_max / 2])
-positive_medium = fuzz.trimf(x_positive, [0, positive_max / 2, positive_max])
-positive_high = fuzz.trimf(x_positive, [positive_max / 2, positive_max, positive_max])
-
-negative_low = fuzz.trimf(x_negative, [0, 0, negative_max / 2])
-negative_medium = fuzz.trimf(x_negative, [0, negative_max / 2, negative_max])
-negative_high = fuzz.trimf(x_negative, [negative_max / 2, negative_max, negative_max])
-
-
-# Function to fuzzify a value based on membership functions, akes a score, a list of membership functions, and a range, 
-# and returns the degree to which the score belongs to each category (low, medium, high). This is done using fuzzy logic interpolation (fuzz.interp_membership).
+# Función para fuzzificar un valor basado en funciones de membresía
 def fuzzify(value, membership_functions, value_range):
     memberships = [
         fuzz.interp_membership(value_range, mf, value) for mf in membership_functions
     ]
     return [float(m) for m in memberships]
 
+# Función para agregar las salidas
+def aggregate_outputs(rule_activations):
+    neg_activation = np.fmax(rule_activations['R4'], 
+                             np.fmax(rule_activations['R7'], rule_activations['R8']))
+    neu_activation = np.fmax(rule_activations['R1'], 
+                             np.fmax(rule_activations['R5'], rule_activations['R9']))
+    pos_activation = np.fmax(rule_activations['R2'], 
+                             np.fmax(rule_activations['R3'], rule_activations['R6']))
+    
+    # Recortar las funciones de membresía
+    output_neg = np.fmin(neg_activation, output_negative)
+    output_neu = np.fmin(neu_activation, output_neutral)
+    output_pos = np.fmin(pos_activation, output_positive)
+    
+    # Combinar las salidas (agregación)
+    aggregated_output = np.fmax(output_neg, np.fmax(output_neu, output_pos))
+    
+    return aggregated_output
 
-# Fuzzify the positive and negative sentiment scores
-data["positive_fuzzy"] = data["positive_score"].apply(
-    lambda x: fuzzify(x, [positive_low, positive_medium, positive_high], x_positive)
-)
-data["negative_fuzzy"] = data["negative_score"].apply(
-    lambda x: fuzzify(x, [negative_low, negative_medium, negative_high], x_negative)
-)
+# Función para la defuzzificación
+def defuzzify_output(aggregated_output, x_output):
+    # Calcular el centroide
+    coa = fuzz.defuzz(x_output, aggregated_output, 'centroid')
+    return coa
 
-print(f"Negative score range: min={data['negative_score'].min()}, max={data['negative_score'].max()}")
-print(f"Positive score range: min={data['positive_score'].min()}, max={data['positive_score'].max()}")
+# Función para clasificar el sentimiento basado en el puntaje defuzzificado
+def classify_sentiment(coa):
+    if 0 <= coa < 3.3:
+        return 'Negative'
+    elif 3.3 <= coa < 6.7:
+        return 'Neutral'
+    elif 6.7 <= coa <= 10:
+        return 'Positive'
 
-print(f"x_positive range: {x_positive}")
-print(f"x_negative range: {x_negative}")
+# Inicializar el analizador de intensidad de sentimiento de NLTK
+sia = SentimentIntensityAnalyzer()
 
-# Save the dataset with fuzzified sentiment scores to a new CSV file
-#output_file_path = "tweets_with_fuzzy_scores.csv"
-#data[
-#    ["sentence", "positive_score", "negative_score", "positive_fuzzy", "negative_fuzzy"]
-#].to_csv(output_file_path, index=False, quoting=csv.QUOTE_ALL)
+# Configuración de la fuzzificación
+positive_max = 1.0  # Ajustar según sea necesario basado en los datos
+negative_max = 1.0  # Ajustar según sea necesario basado en los datos
+x_positive = np.linspace(0, positive_max, 100)
+x_negative = np.linspace(0, negative_max, 100)
+positive_low = fuzz.trimf(x_positive, [0, 0, positive_max / 2])
+positive_medium = fuzz.trimf(x_positive, [0, positive_max / 2, positive_max])
+positive_high = fuzz.trimf(x_positive, [positive_max / 2, positive_max, positive_max])
+negative_low = fuzz.trimf(x_negative, [0, 0, negative_max / 2])
+negative_medium = fuzz.trimf(x_negative, [0, negative_max / 2, negative_max])
+negative_high = fuzz.trimf(x_negative, [negative_max / 2, negative_max, negative_max])
 
-#print(f"Processed file saved at {output_file_path}")
+# Definir las funciones de membresía de salida
+x_output = np.linspace(0, 10, 100)
+output_positive = fuzz.trimf(x_output, [5, 10, 10])
+output_neutral = fuzz.trimf(x_output, [0, 5, 10])
+output_negative = fuzz.trimf(x_output, [0, 0, 5])
+
+
+
+# Ejecutar todo el proceso y medir el tiempo
+results = []
+total_time = time.time()
+for index, row in data.iterrows():
+    start_time = time.time()  
+
+    # Preprocesar el texto
+    processed_text = clean_text(row["sentence"])
+
+    # Calcular los puntajes de sentimiento usando VADER
+    sentiment_scores = sia.polarity_scores(processed_text)
+    positive_score = sentiment_scores["pos"]
+    negative_score = sentiment_scores["neg"]
+
+    # Fuzzificar los puntajes de sentimiento positivos y negativos
+    positive_fuzzy = fuzzify(positive_score, [positive_low, positive_medium, positive_high], x_positive)
+    negative_fuzzy = fuzzify(negative_score, [negative_low, negative_medium, negative_high], x_negative)
+
+    # Evaluar las reglas
+    rule_activation = {
+        'R1': np.fmin(positive_fuzzy[0], negative_fuzzy[0]),  # Low-Low -> Neutral
+        'R2': np.fmin(positive_fuzzy[1], negative_fuzzy[0]),  # Medium-Low -> Positive
+        'R3': np.fmin(positive_fuzzy[2], negative_fuzzy[0]),  # High-Low -> Positive
+        'R4': np.fmin(positive_fuzzy[0], negative_fuzzy[1]),  # Low-Medium -> Negative
+        'R5': np.fmin(positive_fuzzy[1], negative_fuzzy[1]),  # Medium-Medium -> Neutral
+        'R6': np.fmin(positive_fuzzy[2], negative_fuzzy[1]),  # High-Medium -> Positive
+        'R7': np.fmin(positive_fuzzy[0], negative_fuzzy[2]),  # Low-High -> Negative
+        'R8': np.fmin(positive_fuzzy[1], negative_fuzzy[2]),  # Medium-High -> Negative
+        'R9': np.fmin(positive_fuzzy[2], negative_fuzzy[2]),  # High-High -> Neutral
+    }
+
+    # Agregar las salidas
+    aggregated_output = aggregate_outputs(rule_activation)
+
+    # Defuzzificar para obtener el puntaje de sentimiento
+    coa = defuzzify_output(aggregated_output, x_output)
+
+    # Clasificar el sentimiento
+    sentiment_class = classify_sentiment(coa)
+
+    end_time = time.time() 
+    execution_time = end_time - start_time
+
+    # Agregar los resultados
+    results.append({
+        "Oración original": row["sentence"],
+        "Label original": row.get("original_label", "N/A"),
+        "Puntaje positivo": positive_score,
+        "Puntaje negativo": negative_score,
+        "COA": coa,
+        "Resultado de inferencia": sentiment_class,
+        "Tiempo de ejecución": execution_time
+    })
+
+total_time = time.time() - total_time
+# Convertir los resultados a un DataFrame
+results_df = pd.DataFrame(results)
+
+# Calcular el tiempo de ejecución promedio
+average_execution_time = results_df["Tiempo de ejecución"].mean()
+
+# Guardar los resultados en un archivo CSV
+results_df.to_csv("resultados_analisis_sentimiento.csv", index=False)
+
+# Imprimir resumen del benchmark
+print(f"Tiempo total de ejecución: {total_time:.6f} segundos")
+print(f"Tiempo de ejecución promedio total: {average_execution_time:.6f} segundos")
+positive_count = len(results_df[results_df["Resultado de inferencia"] == "Positive"])
+neutral_count = len(results_df[results_df["Resultado de inferencia"] == "Neutral"])
+negative_count = len(results_df[results_df["Resultado de inferencia"] == "Negative"])
+print(f"Total de tweets positivos: {positive_count}")
+print(f"Total de tweets neutrales: {neutral_count}")
+print(f"Total de tweets negativos: {negative_count}")
+positive_time = results_df[results_df["Resultado de inferencia"] == "Positive"]["Tiempo de ejecución"].sum()
+neutral_time = results_df[results_df["Resultado de inferencia"] == "Neutral"]["Tiempo de ejecución"].sum()
+negative_time = results_df[results_df["Resultado de inferencia"] == "Negative"]["Tiempo de ejecución"].sum()
+print(f"Tiempo total para tweets positivos: {positive_time:.6f} segundos")
+print(f"Tiempo total para tweets neutrales: {neutral_time:.6f} segundos")
+print(f"Tiempo total para tweets negativos: {negative_time:.6f} segundos")

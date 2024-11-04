@@ -1,0 +1,11 @@
+# Procesamiento de texto y manejo de datos
+nltk
+pandas
+numpy
+
+# Análisis de sentimiento y lexicones
+vaderSentiment
+
+# Fuzzy logic
+scikit-fuzzy
+scipy
