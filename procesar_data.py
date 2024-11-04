@@ -205,14 +205,28 @@ def classify_sentiment(coa):
 # Inicializar el analizador de intensidad de sentimiento de NLTK
 sia = SentimentIntensityAnalyzer()
 
+# Limpiar el texto 
+data["processed_sentence"] = data["sentence"].apply(clean_text)
+
+# Calcular los puntajes de sentimiento 
+for index, row in data.iterrows():
+    time_score = time.time()
+    sentiment_scores = sia.polarity_scores(row["processed_sentence"])
+    time_score = time.time() - time_score
+    data.at[index, "positive_score"] = sentiment_scores["pos"]
+    data.at[index, "negative_score"] = sentiment_scores["neg"]
+    data.at[index, "time_score"] = time_score
+
 # Configuración de la fuzzificación
-positive_max = 1.0  # Ajustar según sea necesario basado en los datos
-negative_max = 1.0  # Ajustar según sea necesario basado en los datos
+positive_max = data["positive_score"].max()
+negative_max = data["negative_score"].max()
 x_positive = np.linspace(0, positive_max, 100)
 x_negative = np.linspace(0, negative_max, 100)
+
 positive_low = fuzz.trimf(x_positive, [0, 0, positive_max / 2])
 positive_medium = fuzz.trimf(x_positive, [0, positive_max / 2, positive_max])
 positive_high = fuzz.trimf(x_positive, [positive_max / 2, positive_max, positive_max])
+
 negative_low = fuzz.trimf(x_negative, [0, 0, negative_max / 2])
 negative_medium = fuzz.trimf(x_negative, [0, negative_max / 2, negative_max])
 negative_high = fuzz.trimf(x_negative, [negative_max / 2, negative_max, negative_max])
@@ -223,25 +237,15 @@ output_positive = fuzz.trimf(x_output, [5, 10, 10])
 output_neutral = fuzz.trimf(x_output, [0, 5, 10])
 output_negative = fuzz.trimf(x_output, [0, 0, 5])
 
-
-
 # Ejecutar todo el proceso y medir el tiempo
 results = []
 total_time = time.time()
 for index, row in data.iterrows():
     start_time = time.time()  
 
-    # Preprocesar el texto
-    processed_text = clean_text(row["sentence"])
-
-    # Calcular los puntajes de sentimiento usando VADER
-    sentiment_scores = sia.polarity_scores(processed_text)
-    positive_score = sentiment_scores["pos"]
-    negative_score = sentiment_scores["neg"]
-
     # Fuzzificar los puntajes de sentimiento positivos y negativos
-    positive_fuzzy = fuzzify(positive_score, [positive_low, positive_medium, positive_high], x_positive)
-    negative_fuzzy = fuzzify(negative_score, [negative_low, negative_medium, negative_high], x_negative)
+    positive_fuzzy = fuzzify(row["positive_score"], [positive_low, positive_medium, positive_high], x_positive)
+    negative_fuzzy = fuzzify(row["negative_score"], [negative_low, negative_medium, negative_high], x_negative)
 
     # Evaluar las reglas
     rule_activation = {
@@ -266,14 +270,14 @@ for index, row in data.iterrows():
     sentiment_class = classify_sentiment(coa)
 
     end_time = time.time() 
-    execution_time = end_time - start_time
+    execution_time = end_time - start_time + row["time_score"]
 
     # Agregar los resultados
     results.append({
         "Oración original": row["sentence"],
         "Label original": row["sentiment"],
-        "Puntaje positivo": positive_score,
-        "Puntaje negativo": negative_score,
+        "Puntaje positivo": row["positive_score"],
+        "Puntaje negativo": row["negative_score"],
         "COA": coa,
         "Resultado de inferencia": sentiment_class,
         "Tiempo de ejecución": execution_time
@@ -291,7 +295,7 @@ results_df.to_csv("resultados_analisis_sentimiento.csv", index=False)
 
 # Imprimir resumen del benchmark
 print(f"Tiempo total de ejecución: {total_time:.6f} segundos")
-print(f"Tiempo de ejecución promedio total: {average_execution_time:.6f} segundos")
+print(f"Tiempo de ejecución promedio: {average_execution_time:.6f} segundos")
 positive_count = len(results_df[results_df["Resultado de inferencia"] == "Positive"])
 neutral_count = len(results_df[results_df["Resultado de inferencia"] == "Neutral"])
 negative_count = len(results_df[results_df["Resultado de inferencia"] == "Negative"])
