@@ -271,7 +271,7 @@ for index, row in data.iterrows():
     # Agregar los resultados
     results.append({
         "Oración original": row["sentence"],
-        "Label original": row.get("original_label", "N/A"),
+        "Label original": row["sentiment"],
         "Puntaje positivo": positive_score,
         "Puntaje negativo": negative_score,
         "COA": coa,
